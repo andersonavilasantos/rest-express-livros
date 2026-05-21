@@ -1,6 +1,6 @@
-# API REST de Livros — Express + MongoDB
+# API REST de Livros — Express + Mongoose + MongoDB
 
-API simples para gerenciar um catálogo de livros, construída com **Node.js**, **Express** e **MongoDB**. O ambiente roda inteiramente via **Docker**, sem necessidade de instalar Node ou MongoDB na máquina.
+API simples para gerenciar um catálogo de livros, construída com **Node.js**, **Express** e **Mongoose** (ODM para MongoDB). O ambiente roda inteiramente via **Docker**, sem necessidade de instalar Node ou MongoDB na máquina.
 
 ---
 
@@ -10,9 +10,10 @@ API simples para gerenciar um catálogo de livros, construída com **Node.js**, 
 |---|---|
 | Rotas REST (GET, POST, PUT, DELETE) | `index.js` |
 | Middleware de JSON | `app.use(express.json())` |
-| Conexão com banco de dados | `model/db.js` |
-| Modelo de dados com classe JS | `model/livros.js` |
-| CRUD completo | `model/livros.js` + rotas |
+| Conexão com banco via Mongoose | `model/db.js` |
+| Schema e validação de dados | `model/livros.js` |
+| Model com CRUD pronto | `model/livros.js` |
+| Tratamento de erros de validação | rotas POST e PUT em `index.js` |
 | Ambiente com Docker Compose | `docker-compose.yml` |
 
 ---
@@ -22,8 +23,8 @@ API simples para gerenciar um catálogo de livros, construída com **Node.js**, 
 ```
 rest-express-livros/
 ├── model/
-│   ├── db.js        # cria e retorna a conexão com o MongoDB
-│   └── livros.js    # classe Livro com operações CRUD
+│   ├── db.js        # abre a conexão com o MongoDB via Mongoose
+│   └── livros.js    # Schema + Model da coleção de livros
 ├── docker-compose.yml
 ├── index.js         # servidor Express com todas as rotas
 ├── package.json
@@ -44,7 +45,7 @@ rest-express-livros/
 ### 1. Clone ou baixe o projeto
 
 ```bash
-git clone <url-do-repositorio>
+git clone https://github.com/andersonavilasantos/rest-express-livros.git
 cd rest-express-livros
 ```
 
@@ -54,12 +55,13 @@ cd rest-express-livros
 docker compose up
 ```
 
-Na primeira execução, o Docker vai baixar as imagens (pode demorar alguns minutos). Nas próximas execuções será instantâneo.
+Na primeira execução o Docker baixa as imagens (pode demorar alguns minutos). Nas próximas será instantâneo.
 
-Você verá algo assim quando o servidor estiver pronto:
+Quando o servidor estiver pronto você verá:
 
 ```
-node-1   | Servidor rodando na porta 3000
+node-1   | Conectado ao MongoDB via Mongoose
+node-1   | Servidor rodando em http://localhost:3000
 ```
 
 ### 3. Teste a API
@@ -117,6 +119,8 @@ curl http://localhost:3000/livros/<id>
 
 ### Cadastrar um novo livro
 
+`titulo` e `autor` são obrigatórios. Se faltarem, a API retorna `400`.
+
 ```bash
 curl -X POST http://localhost:3000/livros \
   -H "Content-Type: application/json" \
@@ -132,6 +136,11 @@ curl -X POST http://localhost:3000/livros \
   "ano": 1949,
   "preco": 39.90
 }
+```
+
+**Resposta (400 Bad Request)** — campo obrigatório faltando:
+```json
+{ "erro": "Livro validation failed: titulo: Path `titulo` is required." }
 ```
 
 ---
@@ -171,13 +180,13 @@ curl -X DELETE http://localhost:3000/livros/<id>
 
 ### `model/db.js`
 
-Exporta uma função que cria uma nova conexão com o MongoDB toda vez que é chamada. O hostname `mongo` é resolvido automaticamente pelo Docker Compose.
+Exporta uma função assíncrona que abre **uma única conexão** com o MongoDB, reutilizada por toda a aplicação. Chamada uma vez antes do servidor iniciar.
 
 ```js
-const { MongoClient } = require('mongodb');
+const mongoose = require('mongoose');
 
-module.exports = function () {
-    return new MongoClient('mongodb://mongo/livraria');
+module.exports = async function conectar() {
+    await mongoose.connect('mongodb://mongo/livraria');
 };
 ```
 
@@ -185,27 +194,44 @@ module.exports = function () {
 
 ### `model/livros.js`
 
-A classe `Livro` encapsula toda a lógica de banco de dados:
+Define o **Schema** (estrutura e validações) e gera o **Model** automaticamente com o Mongoose.
 
-- **`Livro.find(id?)`** — busca todos os livros ou um específico pelo ID
-- **`livro.save()`** — insere se não tiver `_id`, atualiza se tiver
-- **`livro.delete()`** — remove pelo `_id`
+```js
+const livroSchema = new mongoose.Schema({
+    titulo: { type: String, required: true },
+    autor:  { type: String, required: true },
+    ano:    { type: Number },
+    preco:  { type: Number }
+});
 
-Cada método abre uma conexão, executa a operação e fecha a conexão logo em seguida.
+module.exports = mongoose.model('Livro', livroSchema);
+```
+
+O Model `Livro` já vem com todos os métodos CRUD prontos:
+
+| Método | O que faz |
+|---|---|
+| `Livro.find()` | lista todos |
+| `Livro.findById(id)` | busca um pelo ID |
+| `Livro.create(dados)` | insere e valida |
+| `Livro.findByIdAndUpdate(id, dados, opts)` | atualiza pelo ID |
+| `Livro.findByIdAndDelete(id)` | remove pelo ID |
 
 ---
 
 ### `index.js`
 
-Define as 5 rotas REST e delega toda a lógica de dados para a classe `Livro`:
+Conecta ao banco, define as 5 rotas e sobe o servidor:
 
 | Método | Rota | Ação |
 |---|---|---|
 | GET | `/livros` | lista todos |
 | GET | `/livros/:id` | busca um |
-| POST | `/livros` | cadastra |
+| POST | `/livros` | cadastra (valida campos obrigatórios) |
 | PUT | `/livros/:id` | atualiza |
 | DELETE | `/livros/:id` | remove |
+
+O servidor só sobe **depois** que a conexão com o banco é estabelecida.
 
 ---
 
@@ -223,7 +249,7 @@ docker compose down
 
 ## Exercícios sugeridos
 
-1. Adicione um campo `genero` ao livro e atualize as rotas para filtrar por gênero com `GET /livros?genero=ficcao`.
+1. Adicione um campo `genero` ao Schema e filtre por gênero com `GET /livros?genero=ficcao`.
 2. Crie uma rota `GET /livros/autor/:nome` que retorne todos os livros de um autor.
-3. Adicione validação: retorne `400 Bad Request` se `titulo` ou `autor` não forem enviados no POST.
-4. Implemente paginação na rota de listagem com os parâmetros `?pagina=1&limite=10`.
+3. Adicione validação de valor mínimo no campo `preco` (`min: 0`) diretamente no Schema.
+4. Implemente paginação na listagem com `?pagina=1&limite=10` usando `.skip()` e `.limit()` do Mongoose.
