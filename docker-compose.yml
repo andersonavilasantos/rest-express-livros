@@ -1,0 +1,71 @@
+# docker-compose.yml
+#
+# O Docker Compose permite definir e rodar múltiplos contêineres juntos.
+# Aqui temos dois serviços: 'node' (nossa aplicação) e 'mongo' (banco de dados).
+#
+# Para subir tudo: docker compose up
+# Para parar:      docker compose stop
+# Para remover:    docker compose down
+
+version: '3'
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Serviço: node
+  # Roda a aplicação Express dentro de um contêiner Node.js
+  # -------------------------------------------------------------------------
+  node:
+    # Imagem base: Node.js 20 na versão Alpine (Linux mínimo, tamanho reduzido)
+    image: node:20-alpine
+
+    ports:
+      # Mapeia a porta do contêiner para a máquina local.
+      # Formato: 'porta_local:porta_contêiner'
+      # Assim, http://localhost:3000 no navegador chega ao Express dentro do contêiner.
+      - '3000:3000'
+
+    volumes:
+      # Monta a pasta atual (.) dentro do contêiner em /app.
+      # Qualquer alteração no código-fonte é refletida instantaneamente,
+      # sem precisar recriar o contêiner.
+      - .:/app
+
+    # Define /app como diretório de trabalho dentro do contêiner.
+    # É a partir daqui que os comandos serão executados.
+    working_dir: /app
+
+    # Mantém o terminal aberto (necessário para o nodemon funcionar corretamente)
+    stdin_open: true
+    tty: true
+
+    depends_on:
+      # Garante que o contêiner 'mongo' suba ANTES do 'node'.
+      # Importante: depends_on só controla a ordem de inicialização,
+      # não espera o MongoDB estar 100% pronto — em produção usaríamos
+      # um health check para isso.
+      - mongo
+
+    command: sh -c "npm install && npm start"
+    # Este comando é executado ao iniciar o contêiner:
+    #   npm install → instala as dependências do package.json
+    #   npm start   → executa 'nodemon index.js' (definido no package.json)
+    #
+    # nodemon monitora alterações nos arquivos e reinicia o servidor
+    # automaticamente — essencial durante o desenvolvimento.
+
+  # -------------------------------------------------------------------------
+  # Serviço: mongo
+  # Banco de dados MongoDB
+  # -------------------------------------------------------------------------
+  mongo:
+    # Imagem oficial do MongoDB versão 6
+    image: mongo:6
+
+    ports:
+      # Expõe a porta padrão do MongoDB para a máquina local.
+      # Permite conectar com ferramentas como MongoDB Compass para inspecionar os dados.
+      - '27017:27017'
+    # Nota: os dados são armazenados dentro do contêiner.
+    # Se o contêiner for removido (docker compose down), os dados são perdidos.
+    # Para persistir dados entre reinicializações, adicionaríamos um volume aqui.
