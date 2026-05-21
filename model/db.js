@@ -1,31 +1,34 @@
 /**
  * model/db.js
  *
- * Responsabilidade: criar e retornar uma conexão com o banco de dados MongoDB.
+ * Responsabilidade: conectar a aplicação ao MongoDB usando o Mongoose.
  *
- * Por que isso fica num arquivo separado?
- * Para não repetir a string de conexão em todo lugar.
- * Se precisarmos trocar o endereço do banco, alteramos só aqui.
+ * O que é Mongoose?
+ * Mongoose é uma biblioteca ODM (Object Document Mapper) para MongoDB.
+ * Ela adiciona uma camada sobre o driver nativo com:
+ *   - Schemas  → definem quais campos um documento pode ter e seus tipos
+ *   - Modelos  → classes prontas com métodos de busca, criação e remoção
+ *   - Validações → garantem que os dados estejam corretos antes de salvar
+ *
+ * Diferença em relação ao driver nativo (mongodb):
+ *   Driver nativo → você abre/fecha conexão manualmente em cada operação
+ *   Mongoose      → uma única conexão é aberta no início e reutilizada
+ *                   por toda a vida da aplicação (connection pooling)
  */
 
-// O pacote 'mongodb' é o driver oficial do MongoDB para Node.js.
-// MongoClient é a classe que representa a conexão com o banco.
-const { MongoClient } = require('mongodb');
+const mongoose = require('mongoose');
 
 /**
- * Exportamos uma FUNÇÃO (não a conexão em si).
+ * Exportamos uma função assíncrona que estabelece a conexão.
+ * Ela é chamada UMA VEZ no index.js antes do servidor iniciar,
+ * e o Mongoose mantém essa conexão aberta para todas as operações.
  *
- * Cada vez que essa função é chamada, ela cria uma nova instância de MongoClient.
- * Isso é intencional: cada operação vai abrir sua própria conexão e fechá-la
- * ao terminar, mantendo o código simples e previsível.
- *
- * A URL 'mongodb://mongo/livraria' tem três partes:
- *   - 'mongo'     → nome do serviço definido no docker-compose.yml
- *                   (o Docker resolve esse nome automaticamente como se fosse
- *                   um hostname de rede interna)
- *   - 27017       → porta padrão do MongoDB (omitida, mas usada implicitamente)
- *   - 'livraria'  → nome do banco de dados que será criado/acessado
+ * A URL 'mongodb://mongo/livraria':
+ *   - 'mongo'    → hostname do serviço MongoDB definido no docker-compose.yml
+ *                  (o Docker resolve esse nome como endereço de rede interno)
+ *   - 'livraria' → nome do banco de dados (criado automaticamente se não existir)
  */
-module.exports = function () {
-    return new MongoClient('mongodb://mongo/livraria');
+module.exports = async function conectar() {
+    await mongoose.connect('mongodb://mongo/livraria');
+    console.log('Conectado ao MongoDB via Mongoose');
 };

@@ -1,165 +1,62 @@
 /**
  * model/livros.js
  *
- * Responsabilidade: encapsular toda a lógica de acesso ao banco de dados
- * relacionada à coleção "livros".
+ * Responsabilidade: definir a estrutura (Schema) e o modelo (Model)
+ * da coleção "livros" no MongoDB.
  *
- * Padrão utilizado: Active Record simplificado.
- * A própria classe Livro sabe como se salvar, se buscar e se deletar,
- * em vez de ter um repositório separado.
+ * Com Mongoose, trabalhamos em duas etapas:
  *
- * Um livro tem os seguintes campos:
- *   - _id    : gerado automaticamente pelo MongoDB
- *   - titulo : string
- *   - autor  : string
- *   - ano    : número
- *   - preco  : número
+ *   1. Schema → descreve os campos, tipos e regras de validação
+ *   2. Model  → classe gerada a partir do Schema, com métodos prontos
+ *               para todas as operações CRUD
+ *
+ * Depois de exportar o Model, qualquer arquivo que o importar pode chamar:
+ *   Livro.find()                      → lista todos
+ *   Livro.findById(id)                → busca um pelo ID
+ *   Livro.create(dados)               → insere um novo
+ *   Livro.findByIdAndUpdate(id, dados) → atualiza pelo ID
+ *   Livro.findByIdAndDelete(id)        → remove pelo ID
  */
 
-// Importa a função que cria a conexão com o MongoDB
-const db = require('./db');
+const mongoose = require('mongoose');
 
-// ObjectId é o tipo de dado que o MongoDB usa para os IDs dos documentos.
-// Precisamos dele para converter a string vinda da URL no tipo correto antes
-// de fazer buscas por ID.
-const { ObjectId } = require('mongodb');
-
-class Livro {
-
-    /**
-     * Construtor
-     *
-     * Recebe um objeto com os dados do livro e copia todas as propriedades
-     * para a instância atual usando Object.assign.
-     *
-     * Exemplo:
-     *   const livro = new Livro({ titulo: '1984', autor: 'Orwell', ano: 1949, preco: 39.90 });
-     *   console.log(livro.titulo); // '1984'
-     *
-     * Object.assign(this, params) é equivalente a escrever:
-     *   this.titulo = params.titulo;
-     *   this.autor  = params.autor;
-     *   ... e assim por diante para cada campo.
-     */
-    constructor(params) {
-        Object.assign(this, params);
+/**
+ * Schema do Livro
+ *
+ * Define a "forma" que cada documento da coleção deve ter.
+ * O Mongoose usa essas definições para:
+ *   - Converter tipos automaticamente (ex: "2024" → 2024 para Number)
+ *   - Validar dados antes de salvar (required, min, max, etc.)
+ *   - Ignorar campos desconhecidos que não estão no schema
+ *
+ * Tipos disponíveis: String, Number, Boolean, Date, Array, mongoose.Schema.Types.ObjectId
+ */
+const livroSchema = new mongoose.Schema({
+    titulo: {
+        type: String,
+        required: true   // campo obrigatório — erro se não for enviado
+    },
+    autor: {
+        type: String,
+        required: true
+    },
+    ano: {
+        type: Number
+    },
+    preco: {
+        type: Number
     }
+});
 
-    /**
-     * find(id?) — método ESTÁTICO de busca
-     *
-     * Estático significa que é chamado na classe, não numa instância:
-     *   Livro.find()       → retorna todos os livros
-     *   Livro.find('abc')  → retorna o livro com _id = 'abc'
-     *
-     * Por que async/await?
-     * Operações de banco de dados são assíncronas (levam tempo).
-     * O 'await' pausa a execução da função até a operação terminar,
-     * sem travar o servidor para outras requisições.
-     *
-     * @param {string} [id] - ID do livro (opcional)
-     * @returns {Promise<Livro|Livro[]>} - um livro ou uma lista de livros
-     */
-    static async find(id) {
-        // 1. Cria e abre a conexão com o banco
-        const client = db();
-        await client.connect();
-
-        // 2. Acessa a coleção 'livros' dentro do banco 'livraria'
-        //    Se a coleção não existir, o MongoDB a cria automaticamente
-        const colecao = client.db().collection('livros');
-
-        let resultado;
-
-        if (id) {
-            // Busca UM documento pelo _id.
-            // new ObjectId(id) converte a string '64a1f2...' no tipo
-            // que o MongoDB entende internamente.
-            const doc = await colecao.findOne({ _id: new ObjectId(id) });
-
-            // Envolve o documento retornado numa instância de Livro,
-            // ou retorna null se não encontrou nada.
-            resultado = doc ? new Livro(doc) : null;
-        } else {
-            // Busca TODOS os documentos da coleção.
-            // .find() retorna um cursor (ponteiro); .toArray() materializa tudo em memória.
-            const docs = await colecao.find().toArray();
-
-            // Converte cada documento bruto numa instância de Livro
-            resultado = docs.map(doc => new Livro(doc));
-        }
-
-        // 3. Fecha a conexão — boa prática para liberar recursos
-        await client.close();
-
-        return resultado;
-    }
-
-    /**
-     * save() — salva ou atualiza o livro no banco
-     *
-     * Decide automaticamente entre INSERT e UPDATE:
-     *   - Se o objeto JÁ tem _id  → UPDATE (o livro já existe no banco)
-     *   - Se não tem _id          → INSERT (novo livro)
-     *
-     * Exemplo de INSERT:
-     *   const livro = new Livro({ titulo: '1984', autor: 'Orwell' });
-     *   await livro.save(); // insere e popula livro._id
-     *
-     * Exemplo de UPDATE:
-     *   const livro = new Livro({ _id: '64a1f2...', titulo: '1984 - Edição Especial' });
-     *   await livro.save(); // atualiza o documento existente
-     *
-     * @returns {Promise<Livro>} - a instância atualizada (com _id preenchido)
-     */
-    async save() {
-        const client = db();
-        await client.connect();
-        const colecao = client.db().collection('livros');
-
-        if (this._id) {
-            // --- ATUALIZAÇÃO ---
-            // Separamos _id do restante dos dados com destructuring.
-            // Não queremos enviar o _id dentro de $set, pois o MongoDB
-            // não permite alterar o _id de um documento.
-            const { _id, ...dados } = this;
-
-            await colecao.updateOne(
-                { _id: new ObjectId(_id) },  // filtro: qual documento atualizar
-                { $set: dados }              // $set: quais campos alterar
-            );
-        } else {
-            // --- INSERÇÃO ---
-            // insertOne persiste o documento e retorna o ID gerado.
-            // Guardamos o insertedId na própria instância para que
-            // o chamador possa acessar o _id do livro recém-criado.
-            const resultado = await colecao.insertOne(this);
-            this._id = resultado.insertedId;
-        }
-
-        await client.close();
-        return this;
-    }
-
-    /**
-     * delete() — remove o livro do banco pelo seu _id
-     *
-     * Exemplo:
-     *   const livro = new Livro({ _id: '64a1f2...' });
-     *   await livro.delete();
-     */
-    async delete() {
-        const client = db();
-        await client.connect();
-        const colecao = client.db().collection('livros');
-
-        // deleteOne remove o primeiro documento que corresponde ao filtro.
-        // Como _id é único, isso sempre apaga exatamente um registro.
-        await colecao.deleteOne({ _id: new ObjectId(this._id) });
-
-        await client.close();
-    }
-}
-
-// Exporta a classe para que outros arquivos possam usá-la com require()
-module.exports = Livro;
+/**
+ * Model: Livro
+ *
+ * mongoose.model('Livro', livroSchema) faz duas coisas:
+ *   1. Cria uma classe com todos os métodos CRUD já implementados
+ *   2. Associa essa classe à coleção 'livros' no MongoDB
+ *      (o Mongoose converte 'Livro' → 'livros' automaticamente:
+ *       coloca em minúsculo e adiciona 's' no plural)
+ *
+ * Exportamos o Model diretamente para ser usado nas rotas.
+ */
+module.exports = mongoose.model('Livro', livroSchema);

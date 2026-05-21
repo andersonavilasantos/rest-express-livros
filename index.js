@@ -1,33 +1,23 @@
 /**
  * index.js — ponto de entrada da aplicação
  *
- * Este arquivo tem duas responsabilidades:
- *   1. Configurar o servidor Express (middlewares e rotas)
- *   2. Iniciar o servidor na porta 3000
- *
- * O que é Express?
- * Express é um framework web para Node.js que simplifica a criação de
- * servidores HTTP. Ele cuida do roteamento (qual função executa para
- * cada URL + método HTTP) e do ciclo requisição/resposta (req/res).
+ * Responsabilidades:
+ *   1. Conectar ao banco de dados
+ *   2. Configurar o servidor Express (middlewares e rotas)
+ *   3. Iniciar o servidor na porta 3000
  */
 
-// Importa o framework Express
 const express = require('express');
+const conectar = require('./model/db');
+const Livro    = require('./model/livros');
 
-// Importa a classe Livro que contém toda a lógica de banco de dados
-const Livro = require('./model/livros');
-
-// Cria a aplicação Express
 const app = express();
 
 /**
  * Middleware: express.json()
  *
- * Middleware é uma função que processa a requisição ANTES de chegar
- * na rota. express.json() lê o corpo da requisição (body), interpreta
- * como JSON e disponibiliza em req.body.
- *
- * Sem isso, req.body seria undefined nas rotas POST e PUT.
+ * Processa o corpo (body) das requisições POST e PUT.
+ * Sem ele, req.body seria undefined.
  */
 app.use(express.json());
 
@@ -35,42 +25,39 @@ app.use(express.json());
 // =============================================================================
 // ROTAS
 // =============================================================================
-// Cada rota segue o padrão REST:
-//   Verbo HTTP  +  URL              +  significado
-//   GET            /livros             listar todos
-//   GET            /livros/:id         buscar um
-//   POST           /livros             criar novo
-//   PUT            /livros/:id         atualizar existente
-//   DELETE         /livros/:id         remover
+// Padrão REST:
+//   GET    /livros          → listar todos
+//   GET    /livros/:id      → buscar um
+//   POST   /livros          → criar novo
+//   PUT    /livros/:id      → atualizar existente
+//   DELETE /livros/:id      → remover
 
 
 /**
  * GET /livros
  * Retorna todos os livros cadastrados.
  *
- * req (request)  → objeto com os dados que o cliente enviou
- * res (response) → objeto com métodos para enviar a resposta
- *
- * res.json() serializa o valor para JSON e envia com
- * Content-Type: application/json automaticamente.
+ * Livro.find() é um método do Mongoose que busca todos os documentos
+ * da coleção. Equivale a SELECT * em SQL.
  */
 app.get('/livros', async (req, res) => {
-    const livros = await Livro.find();   // busca todos no banco
-    res.json(livros);                    // responde com status 200 por padrão
+    const livros = await Livro.find();
+    res.json(livros);
 });
 
 
 /**
  * GET /livros/:id
- * Retorna um único livro identificado pelo :id da URL.
+ * Retorna um livro pelo ID.
  *
- * O ':id' é um parâmetro de rota dinâmico.
- * Se a URL for /livros/64a1f2, então req.params.id === '64a1f2'.
+ * Livro.findById(id) já converte a string para ObjectId internamente —
+ * não precisamos mais fazer isso manualmente como com o driver nativo.
+ *
+ * Se o documento não existir, findById retorna null.
  */
 app.get('/livros/:id', async (req, res) => {
-    const livro = await Livro.find(req.params.id);
+    const livro = await Livro.findById(req.params.id);
 
-    // Se não encontrou o livro, retorna 404 com mensagem de erro
     if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
 
     res.json(livro);
@@ -79,40 +66,52 @@ app.get('/livros/:id', async (req, res) => {
 
 /**
  * POST /livros
- * Cria um novo livro com os dados enviados no corpo (body) da requisição.
+ * Cadastra um novo livro.
  *
- * O cliente deve enviar um JSON assim:
- * {
- *   "titulo": "1984",
- *   "autor": "George Orwell",
- *   "ano": 1949,
- *   "preco": 39.90
- * }
+ * Livro.create(req.body) instancia o modelo, aplica as validações
+ * definidas no Schema e persiste no banco em uma única chamada.
  *
- * req.body contém esse objeto, graças ao middleware express.json().
+ * Se um campo 'required' não for enviado, o Mongoose lança um erro
+ * de validação que capturamos no bloco try/catch e retornamos como 400.
  *
- * Respondemos com status 201 (Created) em vez de 200 (OK) porque
- * um recurso novo foi criado — essa distinção segue a convenção REST.
+ * Respondemos com 201 (Created) pois um novo recurso foi criado.
  */
 app.post('/livros', async (req, res) => {
-    const livro = new Livro(req.body);  // cria instância com os dados do body
-    await livro.save();                 // persiste no banco (INSERT)
-    res.status(201).json(livro);        // retorna o livro já com o _id gerado
+    try {
+        const livro = await Livro.create(req.body);
+        res.status(201).json(livro);
+    } catch (erro) {
+        // ValidationError do Mongoose: campo obrigatório faltando, tipo errado, etc.
+        res.status(400).json({ erro: erro.message });
+    }
 });
 
 
 /**
  * PUT /livros/:id
- * Substitui os dados de um livro existente.
+ * Atualiza os dados de um livro existente.
  *
- * O cliente envia os campos atualizados no body.
- * O spread '...req.body' copia todos os campos do body para o objeto,
- * enquanto '_id: req.params.id' garante que o ID correto seja usado.
+ * findByIdAndUpdate(id, dados, opções):
+ *   - id     → qual documento atualizar
+ *   - dados  → campos novos (apenas os enviados serão alterados)
+ *   - { new: true } → retorna o documento DEPOIS da atualização
+ *                     (sem essa opção, retornaria o documento antigo)
+ *   - { runValidators: true } → aplica as validações do Schema no update
  */
 app.put('/livros/:id', async (req, res) => {
-    const livro = new Livro({ _id: req.params.id, ...req.body });
-    await livro.save();   // como tem _id, vai fazer UPDATE
-    res.json(livro);
+    try {
+        const livro = await Livro.findByIdAndUpdate(
+            req.params.id,
+            req.body,
+            { new: true, runValidators: true }
+        );
+
+        if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
+
+        res.json(livro);
+    } catch (erro) {
+        res.status(400).json({ erro: erro.message });
+    }
 });
 
 
@@ -120,25 +119,34 @@ app.put('/livros/:id', async (req, res) => {
  * DELETE /livros/:id
  * Remove um livro pelo ID.
  *
- * Respondemos com status 204 (No Content): a operação foi bem-sucedida,
- * mas não há nada para retornar. Por isso usamos res.send() sem corpo.
+ * findByIdAndDelete(id) busca e remove o documento em uma única operação.
+ * Retorna o documento removido, ou null se não existia.
+ *
+ * 204 (No Content): operação bem-sucedida, sem corpo na resposta.
  */
 app.delete('/livros/:id', async (req, res) => {
-    const livro = new Livro({ _id: req.params.id });
-    await livro.delete();
+    const livro = await Livro.findByIdAndDelete(req.params.id);
+
+    if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
+
     res.status(204).send();
 });
 
 
 // =============================================================================
-// INICIALIZAÇÃO DO SERVIDOR
+// INICIALIZAÇÃO
 // =============================================================================
 
 /**
- * app.listen(porta, callback)
- * Faz o servidor começar a escutar conexões TCP na porta informada.
- * O callback é executado uma vez, assim que o servidor estiver pronto.
+ * Conectamos ao banco ANTES de iniciar o servidor.
+ * Assim garantimos que nenhuma requisição chegue antes do banco estar pronto.
+ *
+ * O uso de async/await aqui é possível com uma IIFE (função imediatamente invocada):
+ * (async () => { ... })()
  */
-app.listen(3000, () => {
-    console.log('Servidor rodando em http://localhost:3000');
-});
+(async () => {
+    await conectar();
+    app.listen(3000, () => {
+        console.log('Servidor rodando em http://localhost:3000');
+    });
+})();
